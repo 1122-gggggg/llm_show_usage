@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from llm_usage_monitor.providers.codex import CodexProvider
@@ -66,3 +66,23 @@ def test_codex_sums_deltas_and_maps_quotas(tmp_path: Path) -> None:
     assert labels["週"].used_percent == 83.0
     assert labels["週"].detail is not None and "credits 100.0" in labels["週"].detail
     assert snap.sessions_today == 1
+
+
+def test_codex_resets_today_across_date_change(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    path = tmp_path / "rollout-test.jsonl"
+    path.write_text(
+        _event(now, {"input_tokens": 10, "output_tokens": 1}) + "\n",
+        encoding="utf-8",
+    )
+    provider = CodexProvider(tmp_path, quota=QuotaClient.disabled())
+    snap = provider.snapshot()
+    assert snap.today.input == 10
+    assert snap.sessions_today == 1
+    week_input = snap.week.input
+
+    provider._day = now.astimezone().date() - timedelta(days=1)
+    rolled = provider.snapshot()
+    assert rolled.today.input == 0
+    assert rolled.sessions_today == 0
+    assert rolled.week.input == week_input

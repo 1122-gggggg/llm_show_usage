@@ -14,6 +14,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 class AntigravityProvider:
     name = "Antigravity"
+    key = "antigravity"
 
     def __init__(self, runner: Runner = subprocess.run, ttl: float = 10.0) -> None:
         self._runner = runner

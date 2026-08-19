@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from rich import box
@@ -197,8 +198,17 @@ def build_table(snapshots: list[ProviderSnapshot], interval: float, now: datetim
     )
 
 
+def _safe_snapshot(provider: Provider) -> ProviderSnapshot:
+    try:
+        return provider.snapshot()
+    except Exception as exc:  # noqa: BLE001
+        note = str(exc).strip() or exc.__class__.__name__
+        return ProviderSnapshot(name=provider.name, plan=None, notes=[note])
+
+
 def render_once(providers: list[Provider], interval: float = 10.0) -> RenderableType:
-    snaps = [provider.snapshot() for provider in providers]
+    with ThreadPoolExecutor(max_workers=max(1, len(providers))) as pool:
+        snaps = list(pool.map(_safe_snapshot, providers))
     now = datetime.now().astimezone()
     return build_table(snaps, interval, now)
 

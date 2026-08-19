@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from llm_usage_monitor.__main__ import parse_args
+from llm_usage_monitor.__main__ import main, parse_args
 from llm_usage_monitor.login import (
     SourceSpec,
     default_sources,
@@ -59,6 +59,26 @@ def test_registered_sources_include_antigravity_and_exclude_kimi() -> None:
     assert "Antigravity" in provider_names
     assert "kimi" not in source_keys
     assert "Kimi" not in provider_names
+
+
+def test_filters_providers_by_stable_key(monkeypatch) -> None:
+    captured: list[str] = []
+
+    def fake_run_once(providers, interval=10.0) -> None:
+        captured.extend(p.key for p in providers)
+
+    monkeypatch.setattr("llm_usage_monitor.__main__.run_once", fake_run_once)
+    assert main(["--once", "--providers", "claude,copilot"]) == 0
+    assert captured == ["claude", "copilot"]
+    names = {provider.key: provider.name for provider in build_providers()}
+    assert names == {
+        "claude": "Claude",
+        "codex": "Codex",
+        "grok": "Grok",
+        "opencode": "OpenCode",
+        "copilot": "Copilot",
+        "antigravity": "Antigravity",
+    }
 
 
 def test_provider_specific_json_key_does_not_false_positive(tmp_path: Path) -> None:

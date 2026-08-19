@@ -5,7 +5,7 @@ from pathlib import Path
 from llm_usage_monitor.aggregate import add_to_buckets, parse_iso
 from llm_usage_monitor.model import ProviderSnapshot, QuotaWindow, TokenTotals
 from llm_usage_monitor.quota import QuotaClient, apply_live
-from llm_usage_monitor.scan import IncrementalJsonlReader
+from llm_usage_monitor.scan import CachedGlob, IncrementalJsonlReader
 
 
 def _window_label(minutes: int | None) -> str:
@@ -20,12 +20,14 @@ def _window_label(minutes: int | None) -> str:
 
 class CodexProvider:
     name = "Codex"
+    key = "codex"
 
     def __init__(self, root: Path | None = None, quota: QuotaClient | None = None) -> None:
         self.root = root or Path.home() / ".codex" / "sessions"
         self._quota = quota or QuotaClient()
         self._auth = Path.home() / ".codex" / "auth.json"
         self._reader = IncrementalJsonlReader()
+        self._files = CachedGlob("**/rollout-*.jsonl")
         self._today = TokenTotals()
         self._week = TokenTotals()
         self._session_files_today: set[Path] = set()
@@ -33,6 +35,8 @@ class CodexProvider:
         self._rate_limits: dict | None = None
         self._rate_limits_ts: datetime | None = None
         self._plan: str | None = None
+        self._day = None
+        self._iso_week = None
 
     def snapshot(self) -> ProviderSnapshot:
         now = datetime.now(UTC)
@@ -44,8 +48,9 @@ class CodexProvider:
                 notes=[f"找不到日誌目錄: {self.root}"],
             )
             return self._with_live(snap)
+        self._roll(now)
 
-        for path in self.root.glob("**/rollout-*.jsonl"):
+        for path in self._files.list(self.root):
             for line in self._reader.read_new(path):
                 try:
                     rec = json.loads(line)
@@ -98,6 +103,19 @@ class CodexProvider:
 
     def _with_live(self, snap: ProviderSnapshot) -> ProviderSnapshot:
         return apply_live(snap, self._quota.codex(self._auth), replace=True)
+
+
+    def _roll(self, now: datetime) -> None:
+        local = now.astimezone()
+        day = local.date()
+        week = local.isocalendar()[:2]
+        if self._day != day:
+            self._today = TokenTotals()
+            self._session_files_today = set()
+            self._day = day
+        if self._iso_week != week:
+            self._week = TokenTotals()
+            self._iso_week = week
 
     def _quotas(self) -> list[QuotaWindow]:
         rl = self._rate_limits

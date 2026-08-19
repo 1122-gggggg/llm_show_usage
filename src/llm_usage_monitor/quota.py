@@ -360,9 +360,10 @@ class QuotaClient:
         if status != 200 or not isinstance(body, dict):
             return QuotaResult(note="Grok 配額讀取失敗")
         windows, plan = parse_grok(body)
-        settings_status, settings = self._get(GROK_SETTINGS, headers)
-        if settings_status == 200 and isinstance(settings, dict):
-            plan = settings.get("subscription_tier_display") or plan
+        if not plan:
+            settings_status, settings = self._get(GROK_SETTINGS, headers)
+            if settings_status == 200 and isinstance(settings, dict):
+                plan = settings.get("subscription_tier_display") or plan
         return QuotaResult(windows=windows, plan=plan)
 
     def _fetch_opencode(self, auth_path: Path) -> QuotaResult:

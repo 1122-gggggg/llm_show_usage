@@ -93,10 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             grok_dir=args.grok_dir,
             opencode_db=args.opencode_db,
         )
-        if provider.name.lower().replace(" ", "") in wanted
-        or (provider.name == "OpenCode" and "opencode" in wanted)
-        or (provider.name == "Copilot" and "copilot" in wanted)
-        or (provider.name == "Antigravity" and "antigravity" in wanted)
+        if provider.key in wanted
     ]
     if args.once:
         run_once(providers, args.interval)

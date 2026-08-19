@@ -5,11 +5,12 @@ from pathlib import Path
 from llm_usage_monitor.aggregate import parse_iso
 from llm_usage_monitor.model import ProviderSnapshot, QuotaWindow
 from llm_usage_monitor.quota import QuotaClient, apply_live
-from llm_usage_monitor.scan import IncrementalJsonlReader
+from llm_usage_monitor.scan import CachedGlob, IncrementalJsonlReader
 
 
 class GrokProvider:
     name = "Grok"
+    key = "grok"
 
     def __init__(self, root: Path | None = None, quota: QuotaClient | None = None) -> None:
         if root is None:
@@ -20,6 +21,7 @@ class GrokProvider:
         self._auth = Path.home() / ".grok" / "auth.json"
         self._reader = IncrementalJsonlReader()
         self._session_reader = IncrementalJsonlReader()
+        self._session_files = CachedGlob("*/*/events.jsonl")
         self._best_ts: datetime | None = None
         self._plan: str | None = None
         self._quota_window = None
@@ -91,7 +93,7 @@ class GrokProvider:
 
         sessions_dir = self.root / "sessions"
         if sessions_dir.exists():
-            for path in sessions_dir.glob("*/*/events.jsonl"):
+            for path in self._session_files.list(sessions_dir):
                 for line in self._session_reader.read_new(path):
                     try:
                         rec = json.loads(line)

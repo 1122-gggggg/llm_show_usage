@@ -10,6 +10,7 @@ from llm_usage_monitor.quota import QuotaClient, apply_live
 
 class OpenCodeProvider:
     name = "OpenCode"
+    key = "opencode"
 
     def __init__(self, db_path: Path | None = None, quota: QuotaClient | None = None) -> None:
         self.db_path = db_path or (

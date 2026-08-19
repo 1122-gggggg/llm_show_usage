@@ -5,23 +5,27 @@ from pathlib import Path
 from llm_usage_monitor.aggregate import add_to_buckets, parse_iso
 from llm_usage_monitor.model import ProviderSnapshot, TokenTotals
 from llm_usage_monitor.quota import QuotaClient, apply_live
-from llm_usage_monitor.scan import IncrementalJsonlReader
+from llm_usage_monitor.scan import CachedGlob, IncrementalJsonlReader
 
 
 class ClaudeProvider:
     name = "Claude"
+    key = "claude"
 
     def __init__(self, root: Path | None = None, quota: QuotaClient | None = None) -> None:
         self.root = root or Path.home() / ".claude" / "projects"
         self._quota = quota or QuotaClient()
         self._creds = Path.home() / ".claude" / ".credentials.json"
         self._reader = IncrementalJsonlReader()
+        self._files = CachedGlob("**/*.jsonl")
         self._seen_ids: set[str] = set()
         self._today = TokenTotals()
         self._week = TokenTotals()
         self._by_model_today: dict[str, TokenTotals] = {}
         self._session_stems_today: set[str] = set()
         self._last_event: datetime | None = None
+        self._day = None
+        self._iso_week = None
 
     def snapshot(self) -> ProviderSnapshot:
         now = datetime.now(UTC)
@@ -32,9 +36,9 @@ class ClaudeProvider:
                 notes=[f"找不到日誌目錄: {self.root}"],
             )
             return self._with_live(snap)
+        self._roll(now)
 
-
-        for path in self.root.glob("**/*.jsonl"):
+        for path in self._files.list(self.root):
             for line in self._reader.read_new(path):
                 try:
                     rec = json.loads(line)
@@ -86,6 +90,20 @@ class ClaudeProvider:
             by_model_today=self._by_model_today,
         )
         return self._with_live(snap)
+
+
+    def _roll(self, now: datetime) -> None:
+        local = now.astimezone()
+        day = local.date()
+        week = local.isocalendar()[:2]
+        if self._day != day:
+            self._today = TokenTotals()
+            self._by_model_today = {}
+            self._session_stems_today = set()
+            self._day = day
+        if self._iso_week != week:
+            self._week = TokenTotals()
+            self._iso_week = week
 
     def _with_live(self, snap: ProviderSnapshot) -> ProviderSnapshot:
         return apply_live(snap, self._quota.claude(self._creds), replace=True)

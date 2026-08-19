@@ -59,3 +59,22 @@ def test_claude_missing_dir(tmp_path: Path) -> None:
     snap = ClaudeProvider(tmp_path / "missing", quota=QuotaClient.disabled()).snapshot()
     assert snap.today.input == 0
     assert any("找不到日誌目錄" in n for n in snap.notes)
+
+
+def test_claude_resets_today_across_date_change(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    log = tmp_path / "proj" / "sess.jsonl"
+    log.parent.mkdir()
+    log.write_text(_line(now, "msg-now", "claude-opus-5", 10) + "\n", encoding="utf-8")
+    provider = ClaudeProvider(tmp_path, quota=QuotaClient.disabled())
+    snap = provider.snapshot()
+    assert snap.today.input == 10
+    assert snap.sessions_today == 1
+    week_input = snap.week.input
+
+    provider._day = now.astimezone().date() - timedelta(days=1)
+    rolled = provider.snapshot()
+    assert rolled.today.input == 0
+    assert rolled.sessions_today == 0
+    assert rolled.by_model_today == {}
+    assert rolled.week.input == week_input

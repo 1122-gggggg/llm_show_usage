@@ -40,11 +40,14 @@ def _copilot_token() -> str | None:
 
 class CopilotProvider:
     name = "Copilot"
+    key = "copilot"
 
     def __init__(self, quota: QuotaClient | None = None) -> None:
         self._quota = quota or QuotaClient()
-        self._token = _copilot_token()
+        self._token: str | None = None
 
     def snapshot(self) -> ProviderSnapshot:
+        if not self._token:
+            self._token = _copilot_token()
         snap = ProviderSnapshot(name=self.name, plan=None)
         return apply_live(snap, self._quota.copilot(self._token), replace=True)
