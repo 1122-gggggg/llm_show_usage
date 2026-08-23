@@ -16,3 +16,6 @@ Thumbs.db
 .credentials.json
 auth.json
 antigravity-oauth-token
+opencode.db
+opencode.db-wal
+opencode.db-shm

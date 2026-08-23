@@ -1,9 +1,15 @@
 [project]
 name = "llm-usage-monitor"
 version = "0.1.0"
-description = "Real-time TUI dashboard for LLM usage (Claude / Codex / Grok / OpenCode)"
+description = "Real-time TUI dashboard for Claude Code, OpenAI Codex, Grok Build, OpenCode GO, GitHub Copilot, and Antigravity usage"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["rich>=13.7"]
+
+[project.urls]
+Homepage = "https://github.com/1122-gggggg/llm_show_usage"
+Repository = "https://github.com/1122-gggggg/llm_show_usage"
+Issues = "https://github.com/1122-gggggg/llm_show_usage/issues"
 
 [project.scripts]
 llm-usage = "llm_usage_monitor.__main__:main"
@@ -16,4 +22,4 @@ build-backend = "hatchling.build"
 packages = ["src/llm_usage_monitor"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.16.4"]
