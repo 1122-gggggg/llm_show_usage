@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Sync locked environment
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run --locked pytest -q
+
+      - name: Run Ruff
+        run: uv run --locked ruff check src tests
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check src tests
+
+      - name: Compile Python sources
+        run: uv run --locked python -m compileall -q src tests
+
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Validate package metadata
+        run: uvx twine check dist/*
+
+      - name: Smoke-test the built wheel
+        run: |
+          uv venv --python 3.14 .artifact-venv
+          uv pip install --python .artifact-venv/bin/python dist/*.whl
+          .artifact-venv/bin/llm-usage --help

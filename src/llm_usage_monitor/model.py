@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 
@@ -42,3 +42,16 @@ class ProviderSnapshot:
     notes: list[str] = field(default_factory=list)
     by_model_today: dict[str, TokenTotals] = field(default_factory=dict)
     cost_today: float | None = None
+
+
+def clone_snapshot(snapshot: ProviderSnapshot) -> ProviderSnapshot:
+    return replace(
+        snapshot,
+        quotas=[replace(window) for window in snapshot.quotas],
+        today=replace(snapshot.today),
+        week=replace(snapshot.week),
+        notes=list(snapshot.notes),
+        by_model_today={
+            model: replace(totals) for model, totals in snapshot.by_model_today.items()
+        },
+    )

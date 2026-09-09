@@ -16,13 +16,14 @@ def build_providers(
     grok_dir: Path | None = None,
     opencode_db: Path | None = None,
     quota: QuotaClient | None = None,
+    opencode_auth: Path | None = None,
 ) -> list[Provider]:
     live = quota or QuotaClient(ttl=10)
     return [
         ClaudeProvider(claude_dir, live),
         CodexProvider(codex_dir, live),
         GrokProvider(grok_dir, live),
-        OpenCodeProvider(opencode_db, live),
+        OpenCodeProvider(opencode_db, live, auth_path=opencode_auth),
         CopilotProvider(live),
         AntigravityProvider(),
     ]

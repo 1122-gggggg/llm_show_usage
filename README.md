@@ -1,6 +1,6 @@
 # llm_show_usage
 
-即時顯示多個 AI CLI 帳號「剩餘配額」的 Rich 終端儀表板。程式會複用各 CLI 已有的本機登入狀態，不會儲存或上傳帳號憑證。
+即時顯示多個 AI CLI 帳號「剩餘配額」的 Rich 終端儀表板。程式會複用各 CLI 已有的本機登入狀態，不會在專案或其他位置持久化帳號憑證副本；查詢配額時，access token 只會傳送到對應供應商的官方 API，不會送往本專案或其他第三方服務。
 
 ## 支援來源
 
@@ -23,17 +23,23 @@
 
 ## 安裝
 
+一般使用者建議把 CLI 安裝在 uv 管理的隔離環境，不需要 clone 專案或安裝開發依賴：
+
 ```powershell
-git clone https://github.com/1122-gggggg/llm_show_usage.git
-cd llm_show_usage
-uv sync
+uv tool install git+https://github.com/1122-gggggg/llm_show_usage
 ```
+
+上式會追蹤儲存庫的最新預設分支；正式 release 後，建議在網址後加上 `@<版本標籤或 commit SHA>`，以便重現安裝與回滾。
+
+若安裝後目前的終端找不到 `llm-usage`，請執行 `uv tool update-shell`，再重新開啟終端。
 
 ## 開啟儀表板
 
 ```powershell
-uv run llm-usage
+llm-usage
 ```
+
+互動式終端預設會持續更新並顯示登入選單。當標準輸出不是可互動 TTY（例如管線、重新導向或 CI）時，程式會自動只輸出一次，不會啟動持續更新畫面。
 
 互動模式會先顯示來源狀態：
 
@@ -62,32 +68,36 @@ SOURCE LOGIN
 只顯示一次，不開登入選單：
 
 ```powershell
-uv run llm-usage --once
+llm-usage --once
 ```
 
 強制開啟登入選單：
 
 ```powershell
-uv run llm-usage --login
+llm-usage --login
 ```
 
 自動登入所有缺少來源：
 
 ```powershell
-uv run llm-usage --login --yes
+llm-usage --login --yes
 ```
 
 只顯示指定來源：
 
 ```powershell
-uv run llm-usage --providers claude,codex,antigravity
+llm-usage --providers claude,codex,antigravity
 ```
 
 自訂更新間隔，例如 30 秒：
 
 ```powershell
-uv run llm-usage --interval 30
+llm-usage --interval 30
 ```
+
+`--interval` 接受 `0.1` 至 `86400` 秒（含端點）；超出範圍或非有限數值會直接顯示參數錯誤。
+
+相較舊版，`--interval` 現在只接受 `0.1` 至 `86400` 秒，使用更短或更長週期的腳本需先調整；未知的 `--providers` 名稱會以 exit code 2 明確報錯；管線與重新導向也改為單次快照，避免背景程序意外常駐。若腳本需要週期資料，請由排程器重複執行 `llm-usage --once`。
 
 完整參數：
 
@@ -97,6 +107,7 @@ llm-usage [--interval 10]
           [--once] [--login] [--yes]
           [--claude-dir PATH] [--codex-dir PATH]
           [--grok-dir PATH] [--opencode-db PATH]
+          [--opencode-auth PATH]
 ```
 
 ## 各來源登入說明
@@ -132,6 +143,7 @@ opencode providers login -p opencode
 ```
 
 程式會顯示 GO 的 5 小時、每週與每月剩餘量，並繼續從本機 SQLite 顯示 token 使用統計。
+使用 `--opencode-db` 讀取其他 profile 的資料庫時，為避免混用帳號，線上配額預設停用；若確定屬於同一 profile，請同時傳入其 `--opencode-auth PATH`。
 
 ### GitHub Copilot
 
@@ -168,7 +180,7 @@ agy -p "/usage"
 執行對應來源的登入指令，或重新執行：
 
 ```powershell
-uv run llm-usage --login
+llm-usage --login
 ```
 
 ### Claude 或 Codex 憑證檔存在，但仍顯示未登入
@@ -197,17 +209,20 @@ agy -p "/usage"
 ## 開發與測試
 
 ```powershell
-uv sync
-uv run pytest -q
-uv run --with ruff ruff check src tests
-uv run python -m compileall -q src tests
+git clone https://github.com/1122-gggggg/llm_show_usage.git
+cd llm_show_usage
+uv sync --locked
+uv run --locked pytest -q
+uv run --locked ruff check src tests
+uv run --locked python -m compileall -q src tests
+uv build
 ```
 
 目前測試涵蓋配額解析、10 秒快取、短暫失敗 fallback、登入選單、過期 token、Antigravity CLI 輸出、OpenCode SQLite 與 TUI 剩餘量顯示。
 
 ## 安全與限制
 
-- 程式只讀本機 CLI 憑證與使用量資料，不會把 token 寫入專案。
-- `.gitignore` 排除虛擬環境、快取、環境變數與本機憑證檔。
+- 程式只讀本機 CLI 憑證與使用量資料，不會把 token 寫入專案或建立新的憑證副本；配額請求只會送往對應供應商的官方 API。
+- `.gitignore` 排除虛擬環境、快取、環境變數、本機憑證檔與 OpenCode 本機資料庫。
 - Claude、Codex、Grok、Copilot 的個人配額 API 並非全部都有公開穩定規格；CLI 更新後可能需要同步調整解析。
 - Antigravity 使用官方 `agy -p "/usage"`，不直接讀取其 Windows 安全儲存內容。
