@@ -1,7 +1,11 @@
 import errno
 import math
 import os
+import select
+import sys
+import time
 import unicodedata
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -12,6 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from llm_usage_monitor.aggregate import fmt_tokens
+from llm_usage_monitor.login import default_sources, ensure_sessions
 from llm_usage_monitor.model import ProviderSnapshot, QuotaWindow, TokenTotals
 from llm_usage_monitor.providers.base import Provider
 
@@ -189,9 +194,9 @@ def _quota_cell(quotas: list[QuotaWindow]) -> Text:
                 text.append(f"  {_fmt_reset(q.resets_at)}", style="dim")
             continue
         text.append_text(_bar(left))
-        text.append(f"  {left:.0f}%", style=_tone(left))
+        text.append(f"  {left:.0f}%", style="bold " + _tone(left))
         if q.resets_at is not None:
-            text.append(f"  {_fmt_reset(q.resets_at)}", style="dim #565f89")
+            text.append(f"  ↺ {_fmt_reset(q.resets_at)}", style="dim #565f89")
         if detail:
             text.append(f"  {detail}", style="dim #a9b1d6")
     return text
@@ -237,7 +242,11 @@ def _provider_cell(snap: ProviderSnapshot) -> Text:
 
 
 def build_table(
-    snapshots: list[ProviderSnapshot], interval: float | None, now: datetime
+    snapshots: list[ProviderSnapshot],
+    interval: float | None,
+    now: datetime,
+    *,
+    key_hint: bool = False,
 ) -> RenderableType:
     table = Table(
         box=box.SIMPLE_HEAVY,
@@ -309,6 +318,7 @@ def build_table(
         )
 
     online = sum(bool(snap.quotas) for snap in snapshots)
+    offline = len(snapshots) - online
     low = sum(value <= 10 for value in remaining_values)
     summary = Text()
     summary.append("● ", style="#9ece6a")
@@ -316,6 +326,10 @@ def build_table(
     summary.append("   ")
     summary.append("● ", style="#f7768e" if low else "#414868")
     summary.append(f"{low} LOW", style="#f7768e" if low else "dim #565f89")
+    if offline:
+        summary.append("   ")
+        summary.append("● ", style="#f7768e")
+        summary.append(f"{offline} OFFLINE", style="#f7768e")
     summary.append("   ")
     if interval is None:
         summary.append("ONCE", style="#7aa2f7")
@@ -332,9 +346,16 @@ def build_table(
                 footer.append("\n")
             footer.append("! ", style="#e0af68")
             footer.append(note, style="dim #e0af68")
+    if key_hint:
+        footer.append("\n")
+        if offline:
+            footer.append("l 登入未連接來源   q 離開", style="dim #565f89")
+        else:
+            footer.append("l 登入   q 離開", style="dim #565f89")
 
     title = Text("LLM LIMITS", style="bold #7aa2f7")
     title.append("  remaining quota", style="dim italic #a9b1d6")
+    title.append(f"  {clock}", style="dim #565f89")
     return Panel(
         Group(summary, Text(""), table, Text(""), footer),
         title=title,
@@ -415,11 +436,11 @@ def _plain_report(snapshots: list[ProviderSnapshot], now: datetime) -> str:
 
 
 def render_once(
-    providers: list[Provider], interval: float | None = 10.0
+    providers: list[Provider], interval: float | None = 10.0, *, key_hint: bool = False
 ) -> RenderableType:
     snaps = _collect_snapshots(providers)
     now = datetime.now().astimezone()
-    return build_table(snaps, interval, now)
+    return build_table(snaps, interval, now, key_hint=key_hint)
 
 
 def run_once(providers: list[Provider], interval: float = 10.0) -> None:
@@ -472,18 +493,87 @@ def _write_plain(file, text: str) -> None:
         file.write(escaped)
 
 
-def run_live(providers: list[Provider], interval: float = 10.0) -> None:
-    import time
+def _stdin_select(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
 
+
+def _stderr_note(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _wait_key(timeout: float) -> str | None:
+    """Wait up to timeout seconds for a keypress; None on timeout or when unavailable."""
+    if timeout <= 0:
+        return None
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                if msvcrt.kbhit():
+                    char = msvcrt.getwch()
+                    return char.lower() if char else None
+                time.sleep(0.05)
+            return None
+        if not sys.stdin.isatty():
+            time.sleep(timeout)
+            return None
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not ready:
+            return None
+        line = sys.stdin.readline()
+        if not line:
+            time.sleep(timeout)
+            return None
+        return line.strip()[:1].lower() or None
+    except (OSError, ValueError):
+        time.sleep(timeout)
+        return None
+
+
+def run_live(
+    providers: list[Provider],
+    interval: float = 10.0,
+    *,
+    sources=None,
+    select: Callable[[str], str] | None = None,
+    printer: Callable[[str], None] | None = None,
+) -> None:
     from rich.live import Live
 
     console = Console()
+    keys = sys.stdin.isatty()
+    select_fn = select or _stdin_select
+    printer_fn = printer or _stderr_note
+    wanted = {provider.key for provider in providers}
     deadline = time.monotonic() + interval
-    initial = render_once(providers, interval)
+    initial = render_once(providers, interval, key_hint=keys)
     with Live(initial, auto_refresh=False, console=console) as live:
         while True:
-            time.sleep(max(0.0, deadline - time.monotonic()))
-            live.update(render_once(providers, interval), refresh=True)
+            key = _wait_key(max(0.0, deadline - time.monotonic()))
+            if key == "q":
+                return
+            if key == "l":
+                live.stop()
+                try:
+                    ensure_sessions(
+                        wanted,
+                        select=select_fn,
+                        printer=printer_fn,
+                        sources=sources if sources is not None else default_sources(),
+                    )
+                finally:
+                    live.start()
+                deadline = time.monotonic() + interval
+                live.update(
+                    render_once(providers, interval, key_hint=keys), refresh=True
+                )
+                continue
+            live.update(render_once(providers, interval, key_hint=keys), refresh=True)
             deadline += interval
             now = time.monotonic()
             while deadline <= now:

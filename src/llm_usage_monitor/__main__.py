@@ -126,17 +126,18 @@ def main(argv: list[str] | None = None) -> int:
     live_capable = _live_capable()
     interactive = sys.stdin.isatty() and sys.stderr.isatty() and live_capable
     try:
+        sources = default_sources(
+            claude_dir=args.claude_dir,
+            codex_dir=args.codex_dir,
+            grok_dir=args.grok_dir,
+        )
         if args.login or args.yes or (interactive and not args.once):
             ensure_sessions(
                 wanted,
                 select=_select,
                 select_all=bool(args.yes),
                 printer=_menu_print,
-                sources=default_sources(
-                    claude_dir=args.claude_dir,
-                    codex_dir=args.codex_dir,
-                    grok_dir=args.grok_dir,
-                ),
+                sources=sources,
             )
 
         providers = [
@@ -153,7 +154,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.once or not live_capable:
             run_once(providers, args.interval)
         else:
-            run_live(providers, args.interval)
+            run_live(
+                providers,
+                args.interval,
+                sources=sources,
+                select=_select,
+                printer=_menu_print,
+            )
         return 0
     except KeyboardInterrupt:
         _LOGIN_CONSOLE.print("\n已取消", style="dim", markup=False)

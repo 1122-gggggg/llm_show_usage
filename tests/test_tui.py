@@ -1,3 +1,5 @@
+import select
+import sys
 from datetime import UTC, datetime
 from io import BytesIO, StringIO, TextIOWrapper
 from types import SimpleNamespace
@@ -11,6 +13,7 @@ from llm_usage_monitor.tui import (
     _provider_cell,
     _quota_cell,
     _safe_snapshot,
+    _wait_key,
     build_table,
     remaining_percent,
     run_live,
@@ -323,7 +326,7 @@ def test_live_refresh_uses_fixed_deadlines(monkeypatch) -> None:
     now = [0.0]
     starts: list[float] = []
 
-    def fake_render(_providers, _interval):
+    def fake_render(_providers, _interval, **_kwargs):
         starts.append(now[0])
         if len(starts) == 4:
             raise StopLoop
@@ -354,3 +357,124 @@ def test_live_refresh_uses_fixed_deadlines(monkeypatch) -> None:
         run_live([], 10.0)
 
     assert starts == [0.0, 10.0, 20.0, 30.0]
+
+
+def test_wait_key_sleeps_through_timeout_without_tty(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    assert _wait_key(5.0) is None
+    assert sleeps == [5.0]
+
+
+def test_wait_key_reads_line_buffered_key(monkeypatch) -> None:
+    fake_stdin = SimpleNamespace(isatty=lambda: True, readline=lambda: "L\n")
+    monkeypatch.setattr(sys, "stdin", fake_stdin)
+    monkeypatch.setattr(
+        select, "select", lambda *_args, **_kwargs: ([fake_stdin], [], [])
+    )
+
+    assert _wait_key(5.0) == "l"
+
+
+def test_wait_key_treats_empty_line_and_eof_as_no_key(monkeypatch) -> None:
+    monkeypatch.setattr(select, "select", lambda *_args, **_kwargs: (["ready"], [], []))
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    monkeypatch.setattr(
+        sys, "stdin", SimpleNamespace(isatty=lambda: True, readline=lambda: "\n")
+    )
+    assert _wait_key(5.0) is None
+
+    monkeypatch.setattr(
+        sys, "stdin", SimpleNamespace(isatty=lambda: True, readline=lambda: "")
+    )
+    assert _wait_key(5.0) is None
+    assert sleeps == [5.0]
+
+
+def _fake_live_class(events: list[str]):
+    class FakeLive:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            events.append("enter")
+            return self
+
+        def __exit__(self, *_args) -> None:
+            events.append("exit")
+
+        def update(self, *_args, **_kwargs) -> None:
+            events.append("update")
+
+        def stop(self) -> None:
+            events.append("stop")
+
+        def start(self) -> None:
+            events.append("start")
+
+    return FakeLive
+
+
+def test_live_quits_on_q_key(monkeypatch) -> None:
+    keys = iter(["q"])
+    monkeypatch.setattr("llm_usage_monitor.tui._wait_key", lambda _timeout: next(keys))
+    monkeypatch.setattr(
+        "llm_usage_monitor.tui.render_once", lambda *_args, **_kwargs: "rendered"
+    )
+    events: list[str] = []
+    monkeypatch.setattr("rich.live.Live", _fake_live_class(events))
+
+    run_live([], 10.0)
+
+    assert events == ["enter", "exit"]
+
+
+def test_live_login_runs_menu_and_resumes_on_l_key(monkeypatch) -> None:
+    keys = iter(["l", "q"])
+    monkeypatch.setattr("llm_usage_monitor.tui._wait_key", lambda _timeout: next(keys))
+    monkeypatch.setattr(
+        "llm_usage_monitor.tui.render_once", lambda *_args, **_kwargs: "rendered"
+    )
+    events: list[str] = []
+    monkeypatch.setattr("rich.live.Live", _fake_live_class(events))
+    calls: dict[str, object] = {}
+
+    def fake_sessions(wanted, *, select, printer, sources):
+        calls["wanted"] = wanted
+        events.append("login-menu")
+        return []
+
+    monkeypatch.setattr("llm_usage_monitor.tui.ensure_sessions", fake_sessions)
+
+    run_live([SimpleNamespace(key="codex", name="Codex")], 10.0)
+
+    assert events == ["enter", "stop", "login-menu", "start", "update", "exit"]
+    assert calls["wanted"] == {"codex"}
+
+
+def test_key_hint_footer_marks_offline_sources() -> None:
+    snapshots = [ProviderSnapshot(name="Codex", plan=None)]
+    output = StringIO()
+    Console(file=output, width=100, color_system=None, force_terminal=False).print(
+        build_table(snapshots, 10.0, datetime(2026, 8, 23, tzinfo=UTC), key_hint=True)
+    )
+    rendered = output.getvalue()
+
+    assert "1 OFFLINE" in rendered
+    assert "l 登入未連接來源" in rendered
+    assert "q 離開" in rendered
+
+
+def test_table_hides_key_hint_by_default() -> None:
+    snapshots = [ProviderSnapshot(name="Codex", plan=None)]
+    output = StringIO()
+    Console(file=output, width=100, color_system=None, force_terminal=False).print(
+        build_table(snapshots, 10.0, datetime(2026, 8, 23, tzinfo=UTC))
+    )
+    rendered = output.getvalue()
+
+    assert "q 離開" not in rendered
