@@ -23,6 +23,14 @@ from llm_usage_monitor.providers import build_providers
 from llm_usage_monitor.quota import parse_copilot
 
 
+def _fake_cli(tmp_path: Path, name: str) -> Path:
+    cli = tmp_path / name
+    cli.write_text("", encoding="utf-8")
+    if os.name != "nt":
+        cli.chmod(0o755)
+    return cli
+
+
 def _spec(
     tmp_path: Path,
     *,
@@ -31,8 +39,7 @@ def _spec(
     connected: bool,
     json_key: str | None = None,
 ) -> SourceSpec:
-    cli = tmp_path / f"{key}.exe"
-    cli.write_text("", encoding="utf-8")
+    cli = _fake_cli(tmp_path, f"{key}.exe")
     session = tmp_path / f"{key}.json"
     if connected:
         if key == "claude":
@@ -477,8 +484,7 @@ def test_json_token_is_trimmed(tmp_path: Path) -> None:
 
 
 def test_probe_uses_utf8_with_replacement(monkeypatch, tmp_path: Path) -> None:
-    cli = tmp_path / "agy.exe"
-    cli.write_text("", encoding="utf-8")
+    cli = _fake_cli(tmp_path, "agy.exe")
     seen: dict[str, object] = {}
 
     def run(_command, **kwargs):
@@ -754,8 +760,7 @@ def test_plain_binary_name_does_not_resolve_from_current_directory(
 
 
 def test_login_runs_official_args(tmp_path: Path) -> None:
-    fake = tmp_path / "codex.exe"
-    fake.write_text("", encoding="utf-8")
+    fake = _fake_cli(tmp_path, "codex.exe")
     spec = SourceSpec(
         key="codex",
         display="Codex",
@@ -806,8 +811,7 @@ def test_copilot_login_uses_matched_alias_when_executable_has_generic_name(
 
 
 def test_login_start_error_does_not_echo_exception_details(tmp_path: Path) -> None:
-    fake = tmp_path / "codex.exe"
-    fake.write_text("", encoding="utf-8")
+    fake = _fake_cli(tmp_path, "codex.exe")
     spec = SourceSpec(
         key="codex",
         display="Codex",
@@ -826,8 +830,7 @@ def test_login_start_error_does_not_echo_exception_details(tmp_path: Path) -> No
 
 
 def test_antigravity_agy_login_uses_read_only_usage_flow(tmp_path: Path) -> None:
-    fake = tmp_path / "agy.exe"
-    fake.write_text("", encoding="utf-8")
+    fake = _fake_cli(tmp_path, "agy.exe")
     spec = SourceSpec(
         key="antigravity",
         display="Antigravity",
@@ -856,8 +859,7 @@ def test_antigravity_agy_login_uses_read_only_usage_flow(tmp_path: Path) -> None
 def test_antigravity_login_refuses_unsafe_version_without_usage(
     tmp_path: Path, output: str
 ) -> None:
-    fake = tmp_path / "agy.exe"
-    fake.write_text("", encoding="utf-8")
+    fake = _fake_cli(tmp_path, "agy.exe")
     spec = SourceSpec(
         key="antigravity",
         display="Antigravity",
