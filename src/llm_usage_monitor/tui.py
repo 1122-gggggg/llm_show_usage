@@ -27,6 +27,11 @@ _PROVIDER_STYLE = {
     "OpenCode": "bold #9ece6a",
     "Copilot": "bold #7aa2f7",
     "Antigravity": "bold #bb9af7",
+    "OMP Claude": "bold #f4a261",
+    "OMP Codex": "bold #7eb8da",
+    "OMP Antigravity": "bold #bb9af7",
+    "OMP Grok": "bold #e8e4d9",
+    "OMP GO": "bold #9ece6a",
 }
 
 _MAX_PROVIDER_NAME = 64

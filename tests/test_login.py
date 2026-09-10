@@ -131,6 +131,17 @@ def test_filters_providers_by_stable_key(monkeypatch) -> None:
         "opencode": "OpenCode",
         "copilot": "Copilot",
         "antigravity": "Antigravity",
+        "ohmypi": "OMP GO",
+    }
+    omp_names = {
+        provider.name for provider in build_providers() if provider.key == "ohmypi"
+    }
+    assert omp_names == {
+        "OMP Claude",
+        "OMP Codex",
+        "OMP Antigravity",
+        "OMP Grok",
+        "OMP GO",
     }
 
 

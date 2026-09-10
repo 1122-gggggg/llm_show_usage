@@ -11,8 +11,9 @@ from rich.text import Text
 from llm_usage_monitor.login import default_sources, ensure_sessions
 from llm_usage_monitor.providers import build_providers
 from llm_usage_monitor.tui import run_live, run_once
+from llm_usage_monitor.update import run_updates_command
 
-DEFAULT_PROVIDERS = "claude,codex,grok,opencode,copilot,antigravity"
+DEFAULT_PROVIDERS = "claude,codex,grok,opencode,copilot,antigravity,ohmypi"
 SUPPORTED_PROVIDERS = frozenset(DEFAULT_PROVIDERS.split(","))
 _LOGIN_CONSOLE = Console(stderr=True)
 
@@ -98,6 +99,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--login", action="store_true", help="開啟來源登入選單")
     parser.add_argument("--yes", action="store_true", help="登入全部未連接來源")
+    parser.add_argument(
+        "--update", action="store_true", help="一鍵更新所有本機 LLM CLI 後離開"
+    )
+    parser.add_argument(
+        "--update-check",
+        action="store_true",
+        help="只顯示更新計畫，不執行更新",
+    )
     parser.add_argument("--claude-dir", type=_expanded_path)
     parser.add_argument("--codex-dir", type=_expanded_path)
     parser.add_argument("--grok-dir", type=_expanded_path)
@@ -120,6 +129,8 @@ def _select(_prompt: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio_errors()
     args = parse_args(argv)
+    if args.update or args.update_check:
+        return run_updates_command(check_only=not args.update)
     wanted = {
         name.strip().lower() for name in args.providers.split(",") if name.strip()
     }

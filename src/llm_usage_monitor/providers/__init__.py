@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from llm_usage_monitor.ohmypi import OhmypiStore
 from llm_usage_monitor.providers.antigravity import AntigravityProvider
 from llm_usage_monitor.providers.base import Provider
 from llm_usage_monitor.providers.claude import ClaudeProvider
 from llm_usage_monitor.providers.codex import CodexProvider
 from llm_usage_monitor.providers.copilot import CopilotProvider
 from llm_usage_monitor.providers.grok import GrokProvider
+from llm_usage_monitor.providers.ohmypi import build_ohmypi_providers
 from llm_usage_monitor.providers.opencode import OpenCodeProvider
 from llm_usage_monitor.quota import QuotaClient
 
@@ -17,6 +19,7 @@ def build_providers(
     opencode_db: Path | None = None,
     quota: QuotaClient | None = None,
     opencode_auth: Path | None = None,
+    ohmypi_store: OhmypiStore | None = None,
 ) -> list[Provider]:
     live = quota or QuotaClient(ttl=10)
     return [
@@ -26,4 +29,5 @@ def build_providers(
         OpenCodeProvider(opencode_db, live, auth_path=opencode_auth),
         CopilotProvider(live),
         AntigravityProvider(),
+        *build_ohmypi_providers(ohmypi_store),
     ]

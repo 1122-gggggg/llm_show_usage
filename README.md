@@ -12,8 +12,9 @@
 | OpenCode GO | 5 小時、每週、每月 GO 配額 | `opencode providers login -p opencode` |
 | GitHub Copilot | Premium requests 剩餘量 | `gh auth login` 或 OpenCode Copilot 登入 |
 | Antigravity | `agy -p "/usage"` 的官方唯讀輸出 | 由 `agy -p "/usage"` 開啟官方驗證 |
+| Oh My Pi | `omp usage --json`：omp 內各模型額度 | `omp auth-broker login`（支援多帳號） |
 
-配額欄顯示的是「剩餘百分比」，不是已使用百分比。預設每 10 秒更新一次；短暫網路錯誤時會保留上一筆成功資料並顯示警告。
+配額欄顯示的一律是「剩餘百分比」，不是已使用百分比。Oh My Pi 列（`OMP ...`）直接複用 omp 自己的額度快取：同一個來源有多個帳號時，每個帳號各佔一組配額列並以帳號前綴區分（例如 `alice·Gemini 週`），不用切換 CLI 就能一次看完；`agy` 本體只支援單一帳號，多帳號請加在 omp。預設每 10 秒更新一次；短暫網路錯誤時會保留上一筆成功資料並顯示警告。
 
 ## 需求
 
@@ -86,8 +87,17 @@ llm-usage --login --yes
 只顯示指定來源：
 
 ```powershell
-llm-usage --providers claude,codex,antigravity
+llm-usage --providers claude,codex,antigravity,ohmypi
 ```
+
+一鍵更新所有本機 LLM CLI（各用官方更新指令，未安裝的自動略過）：
+
+```powershell
+llm-usage --update-check
+llm-usage --update
+```
+
+`--update` 會平行執行 `claude update`、`codex update`、`grok update`、`opencode upgrade`、`agy update`、`omp update` 與 `gh extension upgrade --all`；`gh` 本體請用系統套件管理器更新。任一失敗時 exit code 為 1。
 
 自訂更新間隔，例如 30 秒：
 
@@ -103,8 +113,9 @@ llm-usage --interval 30
 
 ```text
 llm-usage [--interval 10]
-          [--providers claude,codex,grok,opencode,copilot,antigravity]
+          [--providers claude,codex,grok,opencode,copilot,antigravity,ohmypi]
           [--once] [--login] [--yes]
+          [--update] [--update-check]
           [--claude-dir PATH] [--codex-dir PATH]
           [--grok-dir PATH] [--opencode-db PATH]
           [--opencode-auth PATH]
@@ -162,6 +173,22 @@ agy -p "/usage"
 ```
 
 此命令不會啟動 agent turn。未登入時會進入官方驗證；已登入時直接回傳 Gemini 與 Claude/GPT 的 5 小時和每週剩餘配額。程式固定從使用者主目錄執行，避免出現專案「信任資料夾」提示。
+
+`agy` 本體只支援單一帳號。若要同時觀測多個 Antigravity 帳號，請把帳號加進 Oh My Pi：
+
+```powershell
+omp auth-broker login google-antigravity
+```
+
+加完後 `OMP Antigravity` 列會把每個帳號的剩餘配額並排顯示，不用切換 CLI。
+
+### Oh My Pi
+
+```powershell
+omp auth-broker login
+```
+
+不指定來源會進入互動式選擇；也可直接指定例如 `anthropic`、`openai-codex`、`xai-oauth`、`opencode-go`、`google-antigravity`。同一來源可重複登入多個帳號，儀表板會全部顯示。
 
 ## 畫面說明
 
