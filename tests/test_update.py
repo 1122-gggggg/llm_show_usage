@@ -183,16 +183,17 @@ def test_self_update_reports_missing_uv(monkeypatch, capsys) -> None:
     assert "找不到 uv" in capsys.readouterr().err
 
 
-def test_self_update_preserves_failure_exit_code(monkeypatch, capsys) -> None:
+def test_self_update_reports_launch_failure(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         "llm_usage_monitor.self_update.trusted_which", lambda _name: "/bin/uv"
     )
-    monkeypatch.setattr(
-        "llm_usage_monitor.self_update.subprocess.run",
-        lambda cmd, **kwargs: _completed(cmd, returncode=7),
-    )
 
-    assert main(["update"]) == 7
+    def denied(*_args):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr("llm_usage_monitor.self_update.os.execv", denied)
+
+    assert main(["update"]) == 1
     captured = capsys.readouterr()
-    assert "更新失敗" in captured.err
+    assert "無法啟動更新" in captured.err
     assert "更新完成" not in captured.out

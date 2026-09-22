@@ -58,7 +58,7 @@ omp auth-broker login
 llu update
 ```
 
-從本專案 GitHub **main 分支最新 commit** 重新安裝 uv tool，完成後重新執行 `llu`。即使套件版本號未變，也會重新抓取 main；不會更新 Claude、Codex 等其他 CLI。需要 `uv`、Git 與網路連線；更新失敗會顯示錯誤並回傳非零 exit code。
+從本專案 GitHub **main 分支最新 commit** 重新安裝 uv tool，完成後重新執行 `llu`。即使套件版本號未變，也會重新抓取 main；不會更新 Claude、Codex 等其他 CLI。需要 `uv`、Git 與網路連線。程式會把執行權交給 uv，釋放 Windows 上正在使用的安裝檔案；請等 uv 顯示 `Installed 2 executables` 後再執行 `llu`。失敗時以 uv 輸出的錯誤為準；Windows 的交接程序可能先以 exit code 0 結束，不能只靠該 exit code 判定更新成功。
 
 舊版尚無 `llu` 指令時，先執行一次：
 

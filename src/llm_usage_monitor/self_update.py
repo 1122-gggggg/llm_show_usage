@@ -1,6 +1,6 @@
 """Update the installed dashboard from the project's GitHub main branch."""
 
-import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -14,12 +14,20 @@ def run_self_update() -> int:
     if uv is None:
         print("找不到 uv；請先安裝 uv：https://docs.astral.sh/uv/", file=sys.stderr)
         return 1
-    print("正在從 GitHub main 更新 llm_show_usage…", flush=True)
+    print(
+        "正在交由 uv 從 GitHub main 更新；完成後請重新執行 llu。",
+        flush=True,
+    )
     try:
-        result = subprocess.run(
+        # Replacing this process releases the tool environment's executable on
+        # Windows before uv removes it; a waiting subprocess would keep it locked.
+        os.execv(
+            uv,
             [
                 uv,
                 "--no-config",
+                "--directory",
+                str(Path.home()),
                 "tool",
                 "install",
                 "--force",
@@ -28,19 +36,7 @@ def run_self_update() -> int:
                 "llm-usage-monitor",
                 _SOURCE,
             ],
-            cwd=Path.home(),
-            check=False,
         )
-    except KeyboardInterrupt:
-        print("更新已取消", file=sys.stderr)
-        return 130
     except OSError as exc:
         print(f"無法啟動更新：{exc}", file=sys.stderr)
         return 1
-    if result.returncode != 0:
-        print("更新失敗；請查看上方 uv 錯誤訊息。", file=sys.stderr)
-        return result.returncode if result.returncode > 0 else 1
-    print(
-        "更新完成，請重新執行 llu。若找不到指令，請執行 uv tool update-shell 並重開終端。"
-    )
-    return 0
