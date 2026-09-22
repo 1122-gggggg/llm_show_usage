@@ -172,3 +172,27 @@ def test_main_routes_update_flags(monkeypatch) -> None:
     assert main(["--update-check"]) == 0
     assert main(["--update", "--update-check"]) == 0
     assert seen == [False, True, False]
+
+
+def test_self_update_reports_missing_uv(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.trusted_which", lambda _name: None
+    )
+
+    assert main(["update"]) == 1
+    assert "找不到 uv" in capsys.readouterr().err
+
+
+def test_self_update_preserves_failure_exit_code(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.trusted_which", lambda _name: "/bin/uv"
+    )
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.subprocess.run",
+        lambda cmd, **kwargs: _completed(cmd, returncode=7),
+    )
+
+    assert main(["update"]) == 7
+    captured = capsys.readouterr()
+    assert "更新失敗" in captured.err
+    assert "更新完成" not in captured.out

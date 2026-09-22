@@ -8,13 +8,17 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 
-from llm_usage_monitor.login import default_sources, ensure_sessions
+from llm_usage_monitor.login import SourceSpec, default_sources, ensure_sessions, login
 from llm_usage_monitor.providers import build_providers
+from llm_usage_monitor.providers.ohmypi import build_ohmypi_providers
+from llm_usage_monitor.self_update import run_self_update
 from llm_usage_monitor.tui import run_live, run_once
 from llm_usage_monitor.update import run_updates_command
 
-DEFAULT_PROVIDERS = "claude,codex,grok,opencode,copilot,antigravity,ohmypi"
-SUPPORTED_PROVIDERS = frozenset(DEFAULT_PROVIDERS.split(","))
+DEFAULT_PROVIDERS = "ohmypi"
+SUPPORTED_PROVIDERS = frozenset(
+    ["claude", "codex", "grok", "opencode", "copilot", "antigravity", "ohmypi"]
+)
 _LOGIN_CONSOLE = Console(stderr=True)
 
 
@@ -94,6 +98,9 @@ def _configure_stdio_errors() -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="llm-usage")
+    parser.add_argument(
+        "command", nargs="?", choices=("update",), help="從 GitHub main 更新儀表板"
+    )
     parser.add_argument("--interval", type=_positive_interval, default=10)
     parser.add_argument("--providers", type=_provider_list, default=DEFAULT_PROVIDERS)
     parser.add_argument("--once", action="store_true")
@@ -129,6 +136,8 @@ def _select(_prompt: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio_errors()
     args = parse_args(argv)
+    if args.command == "update":
+        return run_self_update()
     if args.update or args.update_check:
         return run_updates_command(check_only=not args.update)
     wanted = {
@@ -137,12 +146,31 @@ def main(argv: list[str] | None = None) -> int:
     live_capable = _live_capable()
     interactive = sys.stdin.isatty() and sys.stderr.isatty() and live_capable
     try:
-        sources = default_sources(
-            claude_dir=args.claude_dir,
-            codex_dir=args.codex_dir,
-            grok_dir=args.grok_dir,
+        omp_only = wanted == {"ohmypi"}
+        if omp_only and (args.login or args.yes):
+            ok, message = login(
+                SourceSpec(
+                    key="ohmypi",
+                    display="Oh My Pi",
+                    binaries=("omp",),
+                    login_args=("auth-broker", "login"),
+                    session_paths=(),
+                    install_hint="請先安裝 Oh My Pi（omp）",
+                )
+            )
+            _menu_print(message)
+            if not ok:
+                return 1
+        sources = (
+            []
+            if omp_only
+            else default_sources(
+                claude_dir=args.claude_dir,
+                codex_dir=args.codex_dir,
+                grok_dir=args.grok_dir,
+            )
         )
-        if args.login or args.yes or (interactive and not args.once):
+        if not omp_only and (args.login or args.yes or (interactive and not args.once)):
             ensure_sessions(
                 wanted,
                 select=_select,
@@ -151,17 +179,21 @@ def main(argv: list[str] | None = None) -> int:
                 sources=sources,
             )
 
-        providers = [
-            provider
-            for provider in build_providers(
-                claude_dir=args.claude_dir,
-                codex_dir=args.codex_dir,
-                grok_dir=args.grok_dir,
-                opencode_db=args.opencode_db,
-                opencode_auth=args.opencode_auth,
-            )
-            if provider.key in wanted
-        ]
+        providers = (
+            build_ohmypi_providers()
+            if omp_only
+            else [
+                provider
+                for provider in build_providers(
+                    claude_dir=args.claude_dir,
+                    codex_dir=args.codex_dir,
+                    grok_dir=args.grok_dir,
+                    opencode_db=args.opencode_db,
+                    opencode_auth=args.opencode_auth,
+                )
+                if provider.key in wanted
+            ]
+        )
         if args.once or not live_capable:
             run_once(providers, args.interval)
         else:

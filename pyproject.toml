@@ -13,6 +13,7 @@ Issues = "https://github.com/1122-gggggg/llm_show_usage/issues"
 
 [project.scripts]
 llm-usage = "llm_usage_monitor.__main__:main"
+llu = "llm_usage_monitor.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

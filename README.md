@@ -1,8 +1,10 @@
 # llm_show_usage
 
-即時顯示多個 AI CLI 帳號「剩餘配額」的 Rich 終端儀表板。程式會複用各 CLI 已有的本機登入狀態，不會在專案或其他位置持久化帳號憑證副本；查詢配額時，access token 只會傳送到對應供應商的官方 API，不會送往本專案或其他第三方服務。
+即時顯示 Oh My Pi（OMP）內模型與多帳號「剩餘配額」的 Rich 終端儀表板。預設只執行 `omp usage --json`，不另外掃描其他 CLI 的日誌、憑證或資料庫，也不直接查詢其他 CLI 的配額 API。不會持久化帳號憑證副本。
 
 ## 支援來源
+
+預設只啟用 **Oh My Pi**。下表其他獨立 CLI 來源僅在明確使用 `--providers` 指定時才啟用。
 
 | 來源 | 配額資料 | 登入方式 |
 |---|---|---|
@@ -20,7 +22,7 @@
 
 - Python 3.11 或更新版本
 - [uv](https://docs.astral.sh/uv/)
-- 只需安裝你要監控的 AI CLI；未安裝的來源不影響其他來源
+- Oh My Pi（`omp`），並在 OMP 內登入要監控的帳號
 
 ## 安裝
 
@@ -37,32 +39,34 @@ uv tool install git+https://github.com/1122-gggggg/llm_show_usage
 ## 開啟儀表板
 
 ```powershell
-llm-usage
+llu
 ```
 
-互動式終端預設會持續更新並顯示登入選單。當標準輸出不是可互動 TTY（例如管線、重新導向或 CI）時，程式會自動只輸出一次，不會啟動持續更新畫面。
+互動式終端會持續更新 OMP 配額，不會要求登入其他 CLI。當標準輸出不是可互動 TTY（例如管線、重新導向或 CI）時，程式會自動只輸出一次。按 `q` 或 `Ctrl+C` 離開。
 
-互動模式會先顯示來源狀態：
+登入或新增 OMP 帳號：
 
-```text
-SOURCE LOGIN
-  ○ Claude           未登入
-  ○ Codex            未登入
-  ● Grok             已登入，自動抓取
-  ● OpenCode GO      已登入，自動抓取
-  ● GitHub Copilot   已登入，自動抓取
-  ● Antigravity      已登入，自動抓取
-
-  [1] Claude
-  [2] Codex
-  選擇要登入的來源 (1,3 / a 全選 / Enter 略過):
+```powershell
+omp auth-broker login
 ```
 
-- 已登入來源會直接抓取，不需要再次選擇。
-- 輸入 `1,3` 可同時登入多個缺少的來源。
-- 輸入 `a` 登入全部缺少的來源。
-- 按 Enter 略過登入。
-- 進入即時儀表板後仍可隨時按 `l` + Enter 重新開啟此選單登入缺少的來源，按 `q` + Enter 或 `Ctrl+C` 離開。
+`llm-usage` 舊指令仍可使用，與 `llu` 相同。
+
+## 更新儀表板
+
+```powershell
+llu update
+```
+
+從本專案 GitHub **main 分支最新 commit** 重新安裝 uv tool，完成後重新執行 `llu`。即使套件版本號未變，也會重新抓取 main；不會更新 Claude、Codex 等其他 CLI。需要 `uv`、Git 與網路連線；更新失敗會顯示錯誤並回傳非零 exit code。
+
+舊版尚無 `llu` 指令時，先執行一次：
+
+```powershell
+uv tool install --force --refresh git+https://github.com/1122-gggggg/llm_show_usage.git@main
+```
+
+此更新方式安裝至 uv tool 的隔離環境，不會修改開發者的 git checkout 或專案虛擬環境。
 
 ## 常用指令
 
@@ -72,25 +76,25 @@ SOURCE LOGIN
 llm-usage --once
 ```
 
-強制開啟登入選單：
+開啟 OMP 官方登入：
 
 ```powershell
 llm-usage --login
 ```
 
-自動登入所有缺少來源：
+亦可使用下列指令開啟 OMP 官方登入：
 
 ```powershell
 llm-usage --login --yes
 ```
 
-只顯示指定來源：
+預設無需指定來源；只有要額外啟用獨立 CLI 查詢時才使用：
 
 ```powershell
 llm-usage --providers claude,codex,antigravity,ohmypi
 ```
 
-一鍵更新所有本機 LLM CLI（各用官方更新指令，未安裝的自動略過）：
+另外保留舊的「更新所有本機 LLM CLI」功能（與 `llu update` 更新儀表板不同，需明確指定）：
 
 ```powershell
 llm-usage --update-check
@@ -112,8 +116,8 @@ llm-usage --interval 30
 完整參數：
 
 ```text
-llm-usage [--interval 10]
-          [--providers claude,codex,grok,opencode,copilot,antigravity,ohmypi]
+llu [update] [--interval 10]
+          [--providers ohmypi]
           [--once] [--login] [--yes]
           [--update] [--update-check]
           [--claude-dir PATH] [--codex-dir PATH]

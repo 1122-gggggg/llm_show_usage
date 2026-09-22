@@ -61,13 +61,6 @@ def _spec(
     )
 
 
-def test_default_refresh_is_ten_seconds_and_has_no_kimi() -> None:
-    args = parse_args([])
-    assert args.interval == 10
-    assert "antigravity" in args.providers
-    assert "kimi" not in args.providers
-
-
 def test_opencode_profile_paths_expand_together(tmp_path: Path) -> None:
     args = parse_args(
         [
