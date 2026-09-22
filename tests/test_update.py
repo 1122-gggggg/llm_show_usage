@@ -188,12 +188,44 @@ def test_self_update_reports_launch_failure(monkeypatch, capsys) -> None:
         "llm_usage_monitor.self_update.trusted_which", lambda _name: "/bin/uv"
     )
 
-    def denied(*_args):
+    def denied(*_args, **_kwargs):
         raise PermissionError("access denied")
 
-    monkeypatch.setattr("llm_usage_monitor.self_update.os.execv", denied)
+    monkeypatch.setattr("llm_usage_monitor.self_update.subprocess.run", denied)
 
     assert main(["update"]) == 1
     captured = capsys.readouterr()
     assert "無法啟動更新" in captured.err
+    assert "更新完成" not in captured.out
+
+
+def test_self_update_waits_for_installer_before_reporting_success(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.trusted_which", lambda _name: "/bin/uv"
+    )
+
+    def install(cmd, **kwargs):
+        assert "更新完成" not in capsys.readouterr().out
+        print("installer finished")
+        return _completed(cmd)
+
+    monkeypatch.setattr("llm_usage_monitor.self_update.subprocess.run", install)
+
+    assert main(["update"]) == 0
+    output = capsys.readouterr().out
+    assert output.index("installer finished") < output.index("更新完成")
+
+
+def test_self_update_preserves_installer_failure(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.trusted_which", lambda _name: "/bin/uv"
+    )
+    monkeypatch.setattr(
+        "llm_usage_monitor.self_update.subprocess.run",
+        lambda cmd, **kwargs: _completed(cmd, returncode=7),
+    )
+
+    assert main(["update"]) == 7
+    captured = capsys.readouterr()
+    assert "更新失敗" in captured.err
     assert "更新完成" not in captured.out
