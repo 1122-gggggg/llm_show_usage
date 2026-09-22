@@ -514,6 +514,9 @@ def _wait_key(timeout: float) -> str | None:
     if timeout <= 0:
         return None
     try:
+        if not sys.stdin.isatty():
+            time.sleep(timeout)
+            return None
         if os.name == "nt":
             import msvcrt
 
@@ -523,9 +526,6 @@ def _wait_key(timeout: float) -> str | None:
                     char = msvcrt.getwch()
                     return char.lower() if char else None
                 time.sleep(0.05)
-            return None
-        if not sys.stdin.isatty():
-            time.sleep(timeout)
             return None
         ready, _, _ = select.select([sys.stdin], [], [], timeout)
         if not ready:
@@ -577,6 +577,8 @@ def run_live(
                 live.update(
                     render_once(providers, interval, key_hint=keys), refresh=True
                 )
+                continue
+            if time.monotonic() < deadline:
                 continue
             live.update(render_once(providers, interval, key_hint=keys), refresh=True)
             deadline += interval

@@ -90,14 +90,24 @@ class IncrementalJsonlReader:
                             self._discarding.discard(path)
                         continue
 
-                    partial = self._partials.setdefault(path, bytearray())
-                    remaining = self._max_line_bytes - len(partial)
+                    partial = self._partials.get(path)
+                    remaining = self._max_line_bytes - (
+                        len(partial) if partial is not None else 0
+                    )
                     amount = min(max(1, remaining + 1), max(1, budget))
                     data = file.readline(amount)
                     if not data:
                         break
                     self._consume(path, data)
                     offset += len(data)
+                    if partial is None and data.endswith(b"\n"):
+                        record = data[:-2] if data.endswith(b"\r\n") else data[:-1]
+                        if record and len(record) <= self._max_line_bytes:
+                            yield record.decode("utf-8", errors="replace")
+                        continue
+                    if partial is None:
+                        partial = bytearray()
+                        self._partials[path] = partial
                     partial.extend(data)
 
                     if not data.endswith(b"\n"):

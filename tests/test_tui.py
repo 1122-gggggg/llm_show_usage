@@ -350,7 +350,8 @@ def test_live_refresh_uses_fixed_deadlines(monkeypatch) -> None:
     monkeypatch.setattr("rich.live.Live", FakeLive)
     monkeypatch.setattr("time.monotonic", lambda: now[0])
     monkeypatch.setattr(
-        "time.sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)
+        "llm_usage_monitor.tui._wait_key",
+        lambda seconds: now.__setitem__(0, now[0] + seconds),
     )
 
     with pytest.raises(StopLoop):
@@ -369,6 +370,7 @@ def test_wait_key_sleeps_through_timeout_without_tty(monkeypatch) -> None:
 
 
 def test_wait_key_reads_line_buffered_key(monkeypatch) -> None:
+    monkeypatch.setattr("llm_usage_monitor.tui.os", SimpleNamespace(name="posix"))
     fake_stdin = SimpleNamespace(isatty=lambda: True, readline=lambda: "L\n")
     monkeypatch.setattr(sys, "stdin", fake_stdin)
     monkeypatch.setattr(
@@ -379,6 +381,7 @@ def test_wait_key_reads_line_buffered_key(monkeypatch) -> None:
 
 
 def test_wait_key_treats_empty_line_and_eof_as_no_key(monkeypatch) -> None:
+    monkeypatch.setattr("llm_usage_monitor.tui.os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(select, "select", lambda *_args, **_kwargs: (["ready"], [], []))
     sleeps: list[float] = []
     monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
@@ -431,6 +434,29 @@ def test_live_quits_on_q_key(monkeypatch) -> None:
     run_live([], 10.0)
 
     assert events == ["enter", "exit"]
+
+
+def test_live_ignores_early_keys_without_delaying_refresh(monkeypatch) -> None:
+    now = [0.0]
+    starts: list[float] = []
+    keys = iter([(1.0, "x"), (2.0, None), (10.0, None), (11.0, "q")])
+
+    def wait_key(_timeout):
+        now[0], key = next(keys)
+        return key
+
+    def render(_providers, _interval, **_kwargs):
+        starts.append(now[0])
+        return "rendered"
+
+    monkeypatch.setattr("time.monotonic", lambda: now[0])
+    monkeypatch.setattr("llm_usage_monitor.tui._wait_key", wait_key)
+    monkeypatch.setattr("llm_usage_monitor.tui.render_once", render)
+    monkeypatch.setattr("rich.live.Live", _fake_live_class([]))
+
+    run_live([], 10.0)
+
+    assert starts == [0.0, 10.0]
 
 
 def test_live_login_runs_menu_and_resumes_on_l_key(monkeypatch) -> None:
