@@ -5,12 +5,13 @@ import select
 import sys
 import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 
 from rich import box
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -126,19 +127,18 @@ def remaining_percent(used: object) -> float | None:
 
 
 def _tone(remaining: float) -> str:
-    if remaining <= 5:
+    if remaining <= 10:
         return "bold #f7768e"
     if remaining <= 20:
         return "#e0af68"
-    if remaining <= 50:
-        return "#c0caf5"
     return "#9ece6a"
 
 
 def _bar(remaining: float) -> Text:
-    fill = max(0, min(6, round(remaining / 100 * 6)))
-    style = _tone(remaining)
-    return Text("━" * fill, style=style) + Text("─" * (6 - fill), style="dim #414868")
+    fill = max(0, min(10, round(remaining / 100 * 10)))
+    return Text("━" * fill, style=_tone(remaining)) + Text(
+        "─" * (10 - fill), style="dim"
+    )
 
 
 def _fmt_reset(ts: datetime | None) -> str:
@@ -174,36 +174,30 @@ def _token_cell(totals: TokenTotals, cost: float | None = None) -> Text:
     return text
 
 
-def _quota_cell(quotas: list[QuotaWindow]) -> Text:
-    text = Text()
+def _quota_cell(quotas: list[QuotaWindow], *, compact: bool = False) -> Text:
+    text = Text(overflow="fold")
     if not quotas:
-        text.append("—", style="dim")
-        return text
-    for i, q in enumerate(quotas):
+        return Text("尚無配額資料", style="dim")
+    for i, quota in enumerate(quotas):
         if i:
             text.append("\n")
-        label = _safe_external_text(q.label, max_length=_MAX_QUOTA_TEXT) or "配額"
-        detail = (
-            _safe_external_text(q.detail, max_length=_MAX_QUOTA_TEXT)
-            if q.detail
-            else ""
-        )
-        text.append(f"{label} ", style="dim #a9b1d6")
-        left = remaining_percent(q.used_percent)
+        label = _safe_external_text(quota.label, max_length=_MAX_QUOTA_TEXT) or "配額"
+        left = remaining_percent(quota.used_percent)
         if left is None:
+            text.append("unknown", style="#e0af68")
+        else:
+            text.append(f"{left:>3.0f}%", style=_tone(left))
+            text.append(" ")
+            text.append_text(_bar(left))
+        text.append(f"  {label}")
+        reset = _fmt_reset(quota.resets_at)
+        if reset:
+            text.append("\n  " if compact else "  · ", style="dim")
+            text.append(f"重設 {reset}", style="dim")
+        if quota.detail:
+            detail = _safe_external_text(quota.detail, max_length=_MAX_QUOTA_TEXT)
             if detail:
-                text.append(detail, style="#c0caf5")
-            else:
-                text.append("unknown", style="#e0af68")
-            if q.resets_at is not None:
-                text.append(f"  {_fmt_reset(q.resets_at)}", style="dim")
-            continue
-        text.append_text(_bar(left))
-        text.append(f"  {left:.0f}%", style="bold " + _tone(left))
-        if q.resets_at is not None:
-            text.append(f"  ↺ {_fmt_reset(q.resets_at)}", style="dim #565f89")
-        if detail:
-            text.append(f"  {detail}", style="dim #a9b1d6")
+                text.append(f"\n  {detail}", style="dim")
     return text
 
 
@@ -214,7 +208,7 @@ def _provider_cell(snap: ProviderSnapshot) -> Text:
         if (value := remaining_percent(quota.used_percent)) is not None
     ]
     has_unknown = len(remaining) != len(snap.quotas)
-    if not snap.quotas or remaining and min(remaining) <= 5:
+    if not snap.quotas or remaining and min(remaining) <= 10:
         health = "#f7768e"
         status = "OFFLINE" if not snap.quotas else "LOW"
     elif remaining and min(remaining) <= 20:
@@ -227,14 +221,13 @@ def _provider_cell(snap: ProviderSnapshot) -> Text:
         health = "#9ece6a"
         status = "OK"
     name = _safe_external_text(snap.name, max_length=_MAX_PROVIDER_NAME) or "unknown"
-    text = Text("● ", style=health)
-    text.append(name, style=_PROVIDER_STYLE.get(name, "bold"))
-    text.append(f" [{status}]", style=health)
+    text = Text(name, style=_PROVIDER_STYLE.get(name, "bold"), overflow="fold")
+    text.append(f"\n● [{status}]", style=health)
     if snap.plan:
         plan = _safe_external_text(snap.plan, max_length=_MAX_PLAN)
         if plan:
             text.append("\n")
-            text.append(plan, style="dim italic #a9b1d6")
+            text.append(plan, style="dim")
     meta: list[str] = []
     if snap.sessions_today:
         meta.append(f"{snap.sessions_today} sessions")
@@ -242,71 +235,81 @@ def _provider_cell(snap: ProviderSnapshot) -> Text:
         meta.append(_fmt_last(snap.last_event))
     if meta:
         text.append("\n")
-        text.append(" · ".join(meta), style="dim #565f89")
+        text.append(" · ".join(meta), style="dim")
     return text
 
 
-def build_table(
-    snapshots: list[ProviderSnapshot],
-    interval: float | None,
-    now: datetime,
-    *,
-    key_hint: bool = False,
-) -> RenderableType:
+def _model_rows(snap: ProviderSnapshot) -> Iterator[tuple[Text, TokenTotals]]:
+    models = sorted(
+        snap.by_model_today.items(), key=lambda item: item[1].total, reverse=True
+    )
+    for model, totals in models[:_MAX_MODEL_ROWS]:
+        name = _safe_external_text(model, max_length=_MAX_MODEL_NAME) or "unknown"
+        yield Text(f"└ {name}", style="dim", overflow="fold"), totals
+    if len(models) > _MAX_MODEL_ROWS:
+        other = TokenTotals()
+        for _model, totals in models[_MAX_MODEL_ROWS:]:
+            other.add(totals)
+        yield Text(f"└ 其他 {len(models) - _MAX_MODEL_ROWS} 個模型", style="dim"), other
+
+
+def _overview_table(snapshots: list[ProviderSnapshot]) -> Table:
     table = Table(
-        box=box.SIMPLE_HEAVY,
+        box=box.SIMPLE,
         expand=True,
-        pad_edge=False,
-        collapse_padding=True,
         show_edge=False,
-        header_style="bold #565f89",
-        row_styles=["", "on #16161e"],
+        header_style="bold",
+        border_style="dim",
         padding=(0, 1),
     )
-    table.add_column("來源", no_wrap=True, min_width=14)
-    table.add_column("剩餘配額", no_wrap=True, min_width=34)
-    table.add_column("今日", no_wrap=True, min_width=12)
-    table.add_column("本週", no_wrap=True, min_width=12)
-
-    for snap in snapshots:
+    table.add_column("來源 / 狀態", ratio=2)
+    table.add_column("剩餘配額 / 重設時間", ratio=5)
+    table.add_column("今日 tokens", ratio=2)
+    table.add_column("本週 tokens", ratio=2)
+    for index, snap in enumerate(snapshots):
+        if index:
+            table.add_section()
         table.add_row(
             _provider_cell(snap),
             _quota_cell(snap.quotas),
             _token_cell(snap.today, snap.cost_today),
             _token_cell(snap.week),
         )
-        models = sorted(
-            snap.by_model_today.items(),
-            key=lambda item: item[1].total,
-            reverse=True,
-        )
-        for model, totals in models[:_MAX_MODEL_ROWS]:
-            name = Text("  └ ", style="dim #414868")
-            safe_model = (
-                _safe_external_text(model, max_length=_MAX_MODEL_NAME) or "unknown"
-            )
-            name.append(safe_model, style="dim #a9b1d6")
-            table.add_row(
-                name,
-                Text(""),
-                _token_cell(totals),
-                Text(""),
-            )
-        if len(models) > _MAX_MODEL_ROWS:
-            other = TokenTotals()
-            for _model, totals in models[_MAX_MODEL_ROWS:]:
-                other.add(totals)
-            table.add_row(
-                Text(
-                    f"  └ 其他 {len(models) - _MAX_MODEL_ROWS} 個模型",
-                    style="dim #a9b1d6",
-                ),
-                Text(""),
-                _token_cell(other),
-                Text(""),
-            )
+        for name, totals in _model_rows(snap):
+            table.add_row(Text(""), name, _token_cell(totals), Text(""))
+    return table
 
-    notes: list[str] = []
+
+def _provider_card(snap: ProviderSnapshot) -> Panel:
+    usage = Text("今日  ", style="dim")
+    usage.append_text(_token_cell(snap.today, snap.cost_today))
+    usage.append("\n本週  ", style="dim")
+    usage.append_text(_token_cell(snap.week))
+    parts: list[RenderableType] = [
+        _provider_cell(snap),
+        Text(""),
+        _quota_cell(snap.quotas, compact=True),
+        Text(""),
+        usage,
+    ]
+    if snap.by_model_today:
+        models = Table.grid(expand=True, padding=(0, 1))
+        models.add_column(ratio=2, overflow="fold")
+        models.add_column(ratio=1)
+        for name, totals in _model_rows(snap):
+            models.add_row(name, _token_cell(totals))
+        parts.extend([Text(""), models])
+    return Panel(Group(*parts), box=box.ROUNDED, border_style="dim", padding=(0, 1))
+
+
+def _build_dashboard(
+    snapshots: list[ProviderSnapshot],
+    interval: float | None,
+    now: datetime,
+    *,
+    width: int,
+) -> RenderableType:
+    notes = Text(overflow="fold")
     remaining_values: list[float] = []
     for snap in snapshots:
         safe_name = (
@@ -315,7 +318,10 @@ def build_table(
         for note in snap.notes:
             safe_note = _safe_external_text(note, max_length=_MAX_NOTE)
             if safe_note:
-                notes.append(f"{safe_name} · {safe_note}")
+                if notes:
+                    notes.append("\n")
+                notes.append(f"{safe_name} · ", style="bold #e0af68")
+                notes.append(safe_note)
         remaining_values.extend(
             value
             for quota in snap.quotas
@@ -326,49 +332,110 @@ def build_table(
     offline = len(snapshots) - online
     low = sum(value <= 10 for value in remaining_values)
     summary = Text()
-    summary.append("● ", style="#9ece6a")
-    summary.append(f"{online}/{len(snapshots)} CONNECTED", style="bold #c0caf5")
-    summary.append("   ")
-    summary.append("● ", style="#f7768e" if low else "#414868")
-    summary.append(f"{low} LOW", style="#f7768e" if low else "dim #565f89")
+    summary.append(f"{online}/{len(snapshots)} CONNECTED", style="bold #9ece6a")
+    summary.append("   ·   ", style="dim")
+    summary.append(f"{low} LOW ≤10%", style="bold #f7768e" if low else "dim")
     if offline:
-        summary.append("   ")
-        summary.append("● ", style="#f7768e")
-        summary.append(f"{offline} OFFLINE", style="#f7768e")
-    summary.append("   ")
-    if interval is None:
-        summary.append("ONCE", style="#7aa2f7")
+        summary.append("   ·   ", style="dim")
+        summary.append(f"{offline} OFFLINE", style="#e0af68")
+
+    header = Text("LLM LIMITS", style="bold #7aa2f7")
+    header.append("  /  剩餘配額", style="dim")
+    sync = Text(f"更新 {_fmt_last(now)}", style="dim")
+    sync.append("   ·   ", style="dim")
+    sync.append("ONCE" if interval is None else f"AUTO {interval:g}s", style="#7aa2f7")
+    parts: list[RenderableType] = [
+        Panel(
+            Group(header, Text(""), summary, sync),
+            box=box.ROUNDED,
+            border_style="#7aa2f7",
+            padding=(0, 1),
+        ),
+    ]
+    if not snapshots:
+        parts.append(
+            Panel(
+                Text(
+                    "尚無可顯示的來源\n使用 omp auth-broker login 登入後重新開啟儀表板。",
+                    overflow="fold",
+                ),
+                title="開始使用",
+                title_align="left",
+                border_style="dim",
+            )
+        )
+    elif width >= 120:
+        parts.append(_overview_table(snapshots))
     else:
-        summary.append(f"AUTO {interval:g}s", style="#7aa2f7")
-
-    clock = now.astimezone().strftime("%H:%M:%S")
-    footer = Text()
-    footer.append(f"last sync  {clock}", style="dim #565f89")
+        parts.extend(_provider_card(snap) for snap in snapshots)
     if notes:
-        footer.append("\n")
-        for index, note in enumerate(notes):
-            if index:
-                footer.append("\n")
-            footer.append("! ", style="#e0af68")
-            footer.append(note, style="dim #e0af68")
-    if key_hint:
-        footer.append("\n")
-        if offline:
-            footer.append("l 登入未連接來源   q 離開", style="dim #565f89")
-        else:
-            footer.append("l 登入   q 離開", style="dim #565f89")
+        parts.append(
+            Panel(
+                notes,
+                title="! 來源提醒",
+                title_align="left",
+                border_style="#e0af68",
+                padding=(0, 1),
+            )
+        )
+    return Group(*parts)
 
-    title = Text("LLM LIMITS", style="bold #7aa2f7")
-    title.append("  remaining quota", style="dim italic #a9b1d6")
-    title.append(f"  {clock}", style="dim #565f89")
-    return Panel(
-        Group(summary, Text(""), table, Text(""), footer),
-        title=title,
-        title_align="left",
-        border_style="#414868",
-        padding=(0, 1),
-        box=box.ROUNDED,
-    )
+
+def _navigation(start: int, stop: int, total: int) -> Text:
+    hint = Text("j/k", style="bold #7aa2f7")
+    hint.append(" 捲動  ·  ")
+    hint.append("l", style="bold #7aa2f7")
+    hint.append(" 登入  ·  ")
+    hint.append("q", style="bold #7aa2f7")
+    hint.append(" 離開\n")
+    if os.name != "nt":
+        hint.append("按鍵後 Enter  ·  ", style="dim")
+    hint.append(f"{start}–{stop} / {total} 行", style="dim")
+    return hint
+
+
+@dataclass
+class _Dashboard:
+    snapshots: list[ProviderSnapshot]
+    interval: float | None
+    now: datetime
+    key_hint: bool
+    scroll: int = 0
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        dashboard = _build_dashboard(
+            self.snapshots,
+            self.interval,
+            self.now,
+            width=options.max_width,
+        )
+        if not self.key_hint:
+            yield dashboard
+            return
+        render_options = options.update(height=None)
+        lines = console.render_lines(dashboard, render_options, new_lines=True)
+        total = len(lines)
+        navigation = console.render_lines(
+            _navigation(total, total, total), render_options, new_lines=True
+        )
+        available = max(1, options.max_height - len(navigation))
+        self.scroll = max(0, min(self.scroll, total - available))
+        stop = min(total, self.scroll + available)
+        for line in lines[self.scroll : stop]:
+            yield from line
+        yield _navigation(self.scroll + 1, stop, total)
+
+
+def build_table(
+    snapshots: list[ProviderSnapshot],
+    interval: float | None,
+    now: datetime,
+    *,
+    key_hint: bool = False,
+) -> RenderableType:
+    return _Dashboard(snapshots, interval, now, key_hint)
 
 
 def _safe_snapshot(provider: Provider) -> ProviderSnapshot:
@@ -441,11 +508,15 @@ def _plain_report(snapshots: list[ProviderSnapshot], now: datetime) -> str:
 
 
 def render_once(
-    providers: list[Provider], interval: float | None = 10.0, *, key_hint: bool = False
-) -> RenderableType:
+    providers: list[Provider],
+    interval: float | None = 10.0,
+    *,
+    key_hint: bool = False,
+    scroll: int = 0,
+) -> _Dashboard:
     snaps = _collect_snapshots(providers)
     now = datetime.now().astimezone()
-    return build_table(snaps, interval, now, key_hint=key_hint)
+    return _Dashboard(snaps, interval, now, key_hint, scroll)
 
 
 def run_once(providers: list[Provider], interval: float = 10.0) -> None:
@@ -556,12 +627,18 @@ def run_live(
     printer_fn = printer or _stderr_note
     wanted = {provider.key for provider in providers}
     deadline = time.monotonic() + interval
-    initial = render_once(providers, interval, key_hint=keys)
-    with Live(initial, auto_refresh=False, console=console) as live:
+    scroll = 0
+    dashboard = render_once(providers, interval, key_hint=keys)
+    with Live(dashboard, auto_refresh=False, console=console) as live:
         while True:
             key = _wait_key(max(0.0, deadline - time.monotonic()))
             if key == "q":
                 return
+            if key in ("j", "k"):
+                dashboard.scroll += 5 if key == "j" else -5
+                live.update(dashboard, refresh=True)
+                scroll = dashboard.scroll
+                continue
             if key == "l":
                 live.stop()
                 try:
@@ -574,13 +651,15 @@ def run_live(
                 finally:
                     live.start()
                 deadline = time.monotonic() + interval
-                live.update(
-                    render_once(providers, interval, key_hint=keys), refresh=True
+                dashboard = render_once(
+                    providers, interval, key_hint=keys, scroll=scroll
                 )
+                live.update(dashboard, refresh=True)
                 continue
             if time.monotonic() < deadline:
                 continue
-            live.update(render_once(providers, interval, key_hint=keys), refresh=True)
+            dashboard = render_once(providers, interval, key_hint=keys, scroll=scroll)
+            live.update(dashboard, refresh=True)
             deadline += interval
             now = time.monotonic()
             while deadline <= now:

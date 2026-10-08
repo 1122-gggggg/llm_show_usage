@@ -48,15 +48,6 @@ def test_quota_cell_shows_remaining_not_used() -> None:
     assert "週" in plain
 
 
-def test_once_summary_does_not_claim_auto_refresh() -> None:
-    console = Console(record=True, width=100)
-    console.print(build_table([], None, datetime(2026, 8, 23, tzinfo=UTC)))
-    plain = console.export_text()
-
-    assert "ONCE" in plain
-    assert "AUTO" not in plain
-
-
 def test_external_text_is_sanitized_in_actual_render_output() -> None:
     escape = "\x1b"
     clipboard_sequence = f"{escape}]52;c;ZmFrZQ=={escape}\\"
@@ -209,19 +200,90 @@ def test_low_quota_takes_precedence_over_mixed_unknown() -> None:
     assert "[UNKNOWN]" not in _provider_cell(snapshot).plain
 
 
-def test_narrow_table_keeps_provider_names_distinguishable() -> None:
+@pytest.mark.parametrize("width", [32, 40, 72, 119, 120, 180])
+def test_responsive_dashboard_preserves_quota_and_usage_values(width: int) -> None:
     snapshots = [
-        ProviderSnapshot(name="Codex", plan=None),
-        ProviderSnapshot(name="Copilot", plan=None),
+        ProviderSnapshot(
+            name="OMP Codex",
+            plan="Plus",
+            quotas=[
+                QuotaWindow("alice·5 小時", 97, None),
+                QuotaWindow("bob·本週", 0, datetime(2026, 8, 24, 3, 31, tzinfo=UTC)),
+                QuotaWindow("unknown-window", None, None, "awaiting quota"),
+            ],
+            today=TokenTotals(input=123_456, output=789),
+            week=TokenTotals(input=654_321, output=987),
+            cost_today=1.25,
+            by_model_today={"gpt-5-codex": TokenTotals(input=111, output=222)},
+        ),
+        ProviderSnapshot(name="OMP Copilot", plan=None, notes=["login required"]),
     ]
     output = StringIO()
-    Console(file=output, width=72, color_system=None, force_terminal=False).print(
+    Console(file=output, width=width, color_system=None, force_terminal=False).print(
         build_table(snapshots, None, datetime(2026, 8, 23, tzinfo=UTC))
     )
 
-    rendered = output.getvalue()
-    assert "Codex" in rendered
-    assert "Copilot" in rendered
+    rendered = "".join(
+        char for char in output.getvalue() if not char.isspace() and char != "│"
+    )
+    for value in (
+        "OMPCodex",
+        "OMPCopilot",
+        "alice·5小時",
+        "bob·本週",
+        "3%",
+        "100%",
+        "unknown-window",
+        "awaitingquota",
+        "↑123.5k",
+        "↓789",
+        "↑654.3k",
+        "↓987",
+        "$1.2500",
+        "gpt-5-codex",
+        "↑111",
+        "↓222",
+        "loginrequired",
+        datetime(2026, 8, 24, 3, 31, tzinfo=UTC).astimezone().strftime("%m-%d%H:%M"),
+    ):
+        assert value in rendered
+
+
+def test_scroll_reaches_last_source_and_clamps_after_resize() -> None:
+    snapshots = [
+        ProviderSnapshot(
+            name=f"Provider {index}",
+            plan=None,
+            quotas=[QuotaWindow("weekly", 25, None)],
+        )
+        for index in range(6)
+    ]
+    snapshots[-1].notes = ["last-source-warning"]
+    dashboard = build_table(
+        snapshots, 10, datetime(2026, 8, 23, tzinfo=UTC), key_hint=True
+    )
+    output = StringIO()
+    console = Console(file=output, width=40, height=12, color_system=None)
+    console.print(dashboard)
+    assert "Provider 0" in output.getvalue()
+    assert "last-source-warning" not in output.getvalue()
+    assert len(output.getvalue().splitlines()) <= 12
+
+    output.seek(0)
+    output.truncate()
+    dashboard.scroll = 10_000
+    console.print(dashboard)
+    assert "last-source-warning" in output.getvalue()
+    assert len(output.getvalue().splitlines()) <= 12
+    assert 0 < dashboard.scroll < 10_000
+
+    output.seek(0)
+    output.truncate()
+    Console(file=output, width=120, height=200, color_system=None).print(dashboard)
+    assert dashboard.scroll == 0
+    assert "Provider 0" in output.getvalue()
+    assert "Provider 5" in output.getvalue()
+    assert "last-source-warning" in output.getvalue()
 
 
 def test_extreme_provider_timestamps_do_not_crash_rendering() -> None:
@@ -480,27 +542,3 @@ def test_live_login_runs_menu_and_resumes_on_l_key(monkeypatch) -> None:
 
     assert events == ["enter", "stop", "login-menu", "start", "update", "exit"]
     assert calls["wanted"] == {"codex"}
-
-
-def test_key_hint_footer_marks_offline_sources() -> None:
-    snapshots = [ProviderSnapshot(name="Codex", plan=None)]
-    output = StringIO()
-    Console(file=output, width=100, color_system=None, force_terminal=False).print(
-        build_table(snapshots, 10.0, datetime(2026, 8, 23, tzinfo=UTC), key_hint=True)
-    )
-    rendered = output.getvalue()
-
-    assert "1 OFFLINE" in rendered
-    assert "l 登入未連接來源" in rendered
-    assert "q 離開" in rendered
-
-
-def test_table_hides_key_hint_by_default() -> None:
-    snapshots = [ProviderSnapshot(name="Codex", plan=None)]
-    output = StringIO()
-    Console(file=output, width=100, color_system=None, force_terminal=False).print(
-        build_table(snapshots, 10.0, datetime(2026, 8, 23, tzinfo=UTC))
-    )
-    rendered = output.getvalue()
-
-    assert "q 離開" not in rendered
